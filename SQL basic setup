@@ -1,0 +1,191 @@
+/************************************************
+SQL agent - Remove the history limit 
+
+************************************************/
+
+USE [msdb]
+GO
+EXEC msdb.dbo.sp_set_sqlagent_properties @jobhistory_max_rows=-1, 
+		@jobhistory_max_rows_per_job=-1
+GO
+
+/************************************************
+Enable DAC
+
+************************************************/
+
+Use master
+GO
+/* 0 = Allow Local Connection, 1 = Allow Remote Connections*/ 
+sp_configure 'remote admin connections', 1 
+GO
+RECONFIGURE
+GO
+
+/************************************************
+SQL server config 
+
+************************************************/
+
+EXEC sys.sp_configure N'show advanced options', N'1'  RECONFIGURE WITH OVERRIDE
+GO
+
+
+EXEC sys.sp_configure N'max server memory (MB)', N'20481'
+GO
+EXEC sys.sp_configure N'cost threshold for parallelism', N'50'
+GO
+EXEC sys.sp_configure N'max degree of parallelism', N'4'
+GO
+
+
+EXEC sys.sp_configure N'backup compression default', N'1'
+GO
+EXEC sys.sp_configure N'optimize for ad hoc workloads', N'1'
+GO
+
+
+RECONFIGURE WITH OVERRIDE
+GO
+EXEC sys.sp_configure N'show advanced options', N'0'  RECONFIGURE WITH OVERRIDE
+GO
+
+
+/************************************************
+SQL error log 90 datafiler 
+
+************************************************/
+
+USE [master]
+GO
+EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'NumErrorLogs', REG_DWORD, 90
+GO
+
+/************************************************
+DISABLE sa
+
+************************************************/
+
+ALTER USER sa WITH NAME = sa_temp;
+GO
+
+ALTER LOGIN [sa_temp] DISABLE
+GO
+
+
+/************************************************
+contained database authentication
+
+************************************************/
+
+sp_configure  'contained database authentication', 1;
+RECONFIGURE
+
+/************************************************
+AUTOGROW_ALL_FILES in user database
+
+************************************************/
+
+use [AdventureWorks2014]
+GO
+select * from sys.filegroups
+
+select 
+'use ['+name+']; select * from sys.filegroups;'
+from sys.databases
+WHERE database_id > 4
+
+
+
+ALTER DATABASE [AdventureWorks2014] MODIFY FILEGROUP [PRIMARY] AUTOGROW_ALL_FILES;
+
+select 
+'ALTER DATABASE ['+name+'] MODIFY FILEGROUP [PRIMARY] AUTOGROW_ALL_FILES;'
+from sys.databases
+WHERE database_id > 4
+--------------------------------
+-Bør overvejes i stedet for -T4199
+
+QUERY_OPTIMIZER_HOTFIXES
+
+
+/************************************************
+set sa (sa_temp) to owner om all DB
+************************************************/
+
+select 'USE ['+name+']; ALTER AUTHORIZATION ON DATABASE::['+name+'] TO [sa_temp];'
+from sys.databases
+        where database_id > 4
+        and owner_sid  != 0x01 
+
+
+/************************************************
+Trace flags
+************************************************/
+/*
+2371 Controlling Autostat (AUTO_UPDATE_STATISTICS) behavior in SQL Server
+3226 Suppress all successful backups in SQL server log
+
+DBCC traceon(3226, -1)
+DBCC traceon(7745, -1)
+
+DBCC tracestatus
+
+--AvG
+
+9567	Enables compression of the data stream for Availability Groups during automatic seeding. During automatic seeding, compression can significantly reduce the transfer time and will increase the load on the processor.
+
+9592	Enables log stream compression for Availability Groups with synchronous replicas. This feature is disabled by default on synchronous replicas because compression adds latency. Log stream compression is enabled by default for asynchronous replicas.
+
+
+https://www.sqlskills.com/blogs/erin/query-store-trace-flags/
+7745 	you can lose some Query Store data, at shutdown
+7752	(at startup) load the Query Store asynchronously, and still allow queries to execute
+
+7752 will be the default behavior in SQL Server 2019.
+*/
+
+
+/************************************************
+Firewall åbninger til SQL
+************************************************/
+/*
+Ind
+	TCP 
+		1433 	(SQL)
+		1434 	(DAC)
+		5022	(Availability Group Endpoint)
+		2383	(SSAS)
+
+	UDP
+		1434 (SQL browser service)
+
+
+
+
+open for TCP if DEV/Express
+*/
+
+
+/************************************************
+SPN
+
+************************************************/
+
+/************************************************
+SSAS rettigheder
+
+************************************************/
+
+/************************************************
+SSIS rettigheder
+SSIS Catalog
+SSIS config
+************************************************/
+
+EXEC [SSISDB].[catalog].[configure_catalog] @property_name=N'RETENTION_WINDOW', @property_value=90
+
+GO
+
+
+
